@@ -1,4 +1,4 @@
-package com.zoobox.com.ui.theme
+package com.zoobox.hero.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

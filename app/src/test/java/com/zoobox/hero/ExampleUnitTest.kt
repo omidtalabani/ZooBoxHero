@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import org.junit.Test
 

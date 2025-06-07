@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import android.Manifest
 import android.app.AlertDialog
@@ -26,7 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.zoobox.com.ui.theme.MikMikDeliveryTheme
+import com.zoobox.hero.ui.theme.MikMikDeliveryTheme
 
 class PermissionActivity : ComponentActivity() {
     private var permissionDialogShown = false

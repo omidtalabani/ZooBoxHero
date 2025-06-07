@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

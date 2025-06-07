@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box

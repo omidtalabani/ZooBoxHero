@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import android.Manifest
 import android.app.AlertDialog
@@ -56,7 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-import com.zoobox.com.ui.theme.MikMikDeliveryTheme
+import com.zoobox.hero.ui.theme.MikMikDeliveryTheme
 
 class MainActivity : ComponentActivity(), LocationListener {
     private lateinit var locationManager: LocationManager

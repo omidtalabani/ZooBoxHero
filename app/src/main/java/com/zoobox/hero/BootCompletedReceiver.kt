@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import android.content.BroadcastReceiver
 import android.content.Context

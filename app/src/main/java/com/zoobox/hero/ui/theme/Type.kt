@@ -1,4 +1,4 @@
-package com.zoobox.com.ui.theme
+package com.zoobox.hero.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

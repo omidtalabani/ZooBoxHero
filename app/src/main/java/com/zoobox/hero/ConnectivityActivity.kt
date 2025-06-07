@@ -1,4 +1,4 @@
-package com.zoobox.com
+package com.zoobox.hero
 
 import android.app.AlertDialog
 import android.content.Context
@@ -22,7 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.zoobox.com.ui.theme.MikMikDeliveryTheme
+import com.zoobox.hero.ui.theme.MikMikDeliveryTheme
 
 class ConnectivityActivity : ComponentActivity() {
     private lateinit var locationManager: LocationManager

@@ -35,7 +35,7 @@
 
         <!-- Your existing activities -->
         <activity
-            android:name="com.zoobox.com.MainActivity"
+            android:name="com.zoobox.hero.MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize"
             android:label="@string/app_name"
@@ -47,7 +47,7 @@
         </activity>
 
         <activity
-            android:name="com.zoobox.com.PermissionActivity"
+            android:name="com.zoobox.hero.PermissionActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize"
             android:theme="@style/Theme.MikMikDelivery" />
