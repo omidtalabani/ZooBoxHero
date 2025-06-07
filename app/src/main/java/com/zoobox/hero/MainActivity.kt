@@ -165,7 +165,7 @@ class MainActivity : ComponentActivity(), LocationListener {
 
         // Method 2: If not found in WebView, try to get from SharedPreferences
         if (foundDriverId == null) {
-            val prefs = getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+            val prefs = getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
             foundDriverId = prefs.getString("driver_id", null)
             Log.d("MainActivity", "Retrieved driver_id from SharedPreferences: $foundDriverId")
         }
@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity(), LocationListener {
             CookieSenderService.setDriverId(foundDriverId)
 
             // And save to SharedPreferences for persistence across app restarts
-            val prefs = getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+            val prefs = getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
             prefs.edit().putString("driver_id", foundDriverId).apply()
 
             Log.d("MainActivity", "Driver ID saved to service and preferences: $foundDriverId")
@@ -203,7 +203,7 @@ class MainActivity : ComponentActivity(), LocationListener {
 
             if (cookies != null) {
                 // Save the entire cookie string
-                val prefs = getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+                val prefs = getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
                 prefs.edit().putString("saved_cookies", cookies).apply()
 
                 // Also extract and save driver_id separately
@@ -222,7 +222,7 @@ class MainActivity : ComponentActivity(), LocationListener {
 
     // Restore cookies from SharedPreferences when app starts
     private fun restoreCookiesFromPreferences() {
-        val prefs = getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
         val savedCookies = prefs.getString("saved_cookies", null)
 
         if (savedCookies != null) {

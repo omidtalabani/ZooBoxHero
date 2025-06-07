@@ -27,7 +27,7 @@ fun SplashScreen(onSplashScreenComplete: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "MikMik Hero",
+            text = "ZooBox Hero",
             fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White

@@ -21,7 +21,7 @@ class BootCompletedReceiver : BroadcastReceiver() {
                 Log.d("BootCompletedReceiver", "Restarting service")
 
                 // Get the stored driver ID from preferences
-                val prefs = context.getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+                val prefs = context.getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
                 val driverId = prefs.getString("driver_id", null)
 
                 // Set the driver ID in the service

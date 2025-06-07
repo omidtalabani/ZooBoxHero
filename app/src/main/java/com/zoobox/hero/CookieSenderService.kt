@@ -63,7 +63,7 @@ class CookieSenderService : Service() {
                 checkPendingOrders(cachedDriverId)
 
                 // Store driver ID in shared preferences for recovery
-                val prefs = applicationContext.getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+                val prefs = applicationContext.getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
                 prefs.edit().putString("driver_id", cachedDriverId).apply()
             } else {
                 // If no cached driver ID, try to get it from cookies
@@ -73,7 +73,7 @@ class CookieSenderService : Service() {
                     checkPendingOrders(newDriverId)
 
                     // Store driver ID in shared preferences for recovery
-                    val prefs = applicationContext.getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+                    val prefs = applicationContext.getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
                     prefs.edit().putString("driver_id", newDriverId).apply()
                 }
             }
@@ -214,7 +214,7 @@ class CookieSenderService : Service() {
 
         // Try to recover driver ID from shared preferences if needed
         if (driverId == null) {
-            val prefs = applicationContext.getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+            val prefs = applicationContext.getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
             val savedDriverId = prefs.getString("driver_id", null)
             if (savedDriverId != null) {
                 Log.d("CookieSenderService", "Recovered driver ID from preferences: $savedDriverId")
@@ -241,7 +241,7 @@ class CookieSenderService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MikMik Delivery")
+            .setContentTitle("ZooBox Hero")
             .setContentText("Checking for new orders")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
@@ -266,7 +266,7 @@ class CookieSenderService : Service() {
 
         // Try to restart the service if it's being destroyed
         val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
-            action = "com.mikmik.hero.RESTART_SERVICE"
+            action = "com.zoobox.hero.RESTART_SERVICE"
         }
         sendBroadcast(restartServiceIntent)
 
@@ -281,7 +281,7 @@ class CookieSenderService : Service() {
 
         // Try to restart the service
         val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
-            action = "com.mikmik.hero.RESTART_SERVICE"
+            action = "com.zoobox.hero.RESTART_SERVICE"
         }
         sendBroadcast(restartServiceIntent)
     }
@@ -301,7 +301,7 @@ class CookieSenderService : Service() {
             Log.e("CookieSenderService", "Error getting cookie", e)
 
             // Try to recover from shared preferences
-            val prefs = applicationContext.getSharedPreferences("MikMikPrefs", Context.MODE_PRIVATE)
+            val prefs = applicationContext.getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
             return prefs.getString("driver_id", null)
         }
         return null
@@ -500,7 +500,7 @@ class CookieSenderService : Service() {
                     PowerManager.FULL_WAKE_LOCK or
                             PowerManager.ACQUIRE_CAUSES_WAKEUP or
                             PowerManager.ON_AFTER_RELEASE,
-                    "MikMik:NotificationWakeLock"
+                    "ZooBox:NotificationWakeLock"
                 )
                 wakeLock.acquire(30000) // 30 seconds
 

@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MikMik Delivery"
+rootProject.name = "ZooBox Hero"
 include(":app")
  

@@ -44,7 +44,7 @@ class FCMService : FirebaseMessagingService() {
         if (message.data.isNotEmpty()) {
             Log.d(TAG, "Message Data: ${message.data}")
 
-            val title = message.data["title"] ?: "MikMik Hero"
+            val title = message.data["title"] ?: "ZooBox Hero"
             val body = message.data["body"] ?: "You have a new notification"
             sendNotification(title, body)
         }
@@ -70,7 +70,7 @@ class FCMService : FirebaseMessagingService() {
 
         val notificationBuilder = NotificationCompat.Builder(this, FCM_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title ?: "MikMik Hero")
+            .setContentTitle(title ?: "ZooBox Hero")
             .setContentText(messageBody)
             .setAutoCancel(true)
             .setSound(customSoundUri)  // Set the custom sound URI

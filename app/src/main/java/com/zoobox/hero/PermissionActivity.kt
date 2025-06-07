@@ -26,7 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.zoobox.hero.ui.theme.MikMikDeliveryTheme
+import com.zoobox.hero.ui.theme.ZooBoxHeroTheme
 
 class PermissionActivity : ComponentActivity() {
     private var permissionDialogShown = false
@@ -69,7 +69,7 @@ class PermissionActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MikMikDeliveryTheme {
+            ZooBoxHeroTheme {
                 PermissionScreen(
                     onRequestPermission = { checkAndRequestLocationPermissions() }
                 )
@@ -146,7 +146,7 @@ class PermissionActivity : ComponentActivity() {
                 // Show explanation first
                 AlertDialog.Builder(this)
                     .setTitle("Notification Permission")
-                    .setMessage("MikMik Hero needs notification permission to alert you about new orders. Please grant notification access to ensure you don't miss any orders.")
+                    .setMessage("ZooBox Hero needs notification permission to alert you about new orders. Please grant notification access to ensure you don't miss any orders.")
                     .setPositiveButton("Continue") { _, _ ->
                         requestNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
@@ -188,7 +188,7 @@ class PermissionActivity : ComponentActivity() {
         batteryOptimizationDialogShown = true
         AlertDialog.Builder(this)
             .setTitle("Battery Optimization")
-            .setMessage("To receive order notifications reliably, MikMik Hero needs to be exempt from battery optimization. Please tap 'Disable Optimization' and select 'All apps', find MikMik Hero, and select 'Don't optimize'.")
+            .setMessage("To receive order notifications reliably, ZooBox Hero needs to be exempt from battery optimization. Please tap 'Disable Optimization' and select 'All apps', find ZooBox Hero, and select 'Don't optimize'.")
             .setPositiveButton("Disable Optimization") { _, _ ->
                 try {
                     val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
@@ -243,7 +243,7 @@ class PermissionActivity : ComponentActivity() {
         permissionDialogShown = true
         AlertDialog.Builder(this)
             .setTitle("Location Permission Required")
-            .setMessage("MikMik Hero needs location permission to function properly. Please grant location access to continue using the app.")
+            .setMessage("ZooBox Hero needs location permission to function properly. Please grant location access to continue using the app.")
             .setPositiveButton("App Settings") { _, _ ->
                 // Take the user to app settings
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
@@ -290,7 +290,7 @@ fun PermissionScreen(onRequestPermission: () -> Unit) {
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "MikMik Hero needs location, notification, and battery optimization permissions to track deliveries and alert you about new orders.",
+                text = "ZooBox Hero needs location, notification, and battery optimization permissions to track deliveries and alert you about new orders.",
                 fontSize = 18.sp,
                 color = Color.White,
                 textAlign = TextAlign.Center
