@@ -56,7 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-import com.zoobox.hero.ui.theme.MikMikDeliveryTheme
+import com.zoobox.hero.ui.theme.ZooBoxHeroTheme
 
 class MainActivity : ComponentActivity(), LocationListener {
     private lateinit var locationManager: LocationManager
@@ -453,7 +453,7 @@ class MainActivity : ComponentActivity(), LocationListener {
             val skipSplash = intent.getBooleanExtra("SKIP_SPLASH", false)
 
             setContent {
-                MikMikDeliveryTheme {
+                ZooBoxHeroTheme {
                     val showSplash = remember { mutableStateOf(!skipSplash) }
 
                     if (showSplash.value) {

@@ -22,7 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.zoobox.hero.ui.theme.MikMikDeliveryTheme
+import com.zoobox.hero.ui.theme.ZooBoxHeroTheme
 
 class ConnectivityActivity : ComponentActivity() {
     private lateinit var locationManager: LocationManager
@@ -40,7 +40,7 @@ class ConnectivityActivity : ComponentActivity() {
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
         setContent {
-            MikMikDeliveryTheme {
+            ZooBoxHeroTheme {
                 ConnectivityCheckScreen()
             }
         }
