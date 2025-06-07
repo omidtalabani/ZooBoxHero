@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "825243647060",
+    "project_id": "mikmik-hero",
+    "storage_bucket": "mikmik-hero.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:825243647060:android:c17b592337f6945c4001c1",
+        "android_client_info": {
+          "package_name": "com.mikmik.hero"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrNN1T9TII9eQN2b1SUtkeb9X1BpwYxZs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:825243647060:android:fdb3eef22b75a7224001c1",
+        "android_client_info": {
+          "package_name": "com.zoobox.hero"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrNN1T9TII9eQN2b1SUtkeb9X1BpwYxZs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
