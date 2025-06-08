@@ -11,6 +11,8 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -18,6 +20,8 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import android.webkit.CookieManager
 import android.widget.Toast
@@ -36,7 +40,10 @@ class CookieSenderService : Service() {
         .build()
     private val serverBaseUrl = "https://mikmik.site/heroes/check_pending_orders.php"
     private val sendInterval = 15000L // 15 seconds
-    private var wakeLock: PowerManager.WakeLock? = null
+
+    // Enhanced wake lock management
+    private var partialWakeLock: PowerManager.WakeLock? = null
+    private var screenWakeLock: PowerManager.WakeLock? = null
 
     // Keep track of the last notification time to avoid spamming
     private var lastNotificationTime = 0L
@@ -48,9 +55,52 @@ class CookieSenderService : Service() {
         private const val RESTART_SERVICE_ALARM_ID = 12345
         private var driverId: String? = null
 
+        // Static references to track active notification effects
+        private var activeMediaPlayer: MediaPlayer? = null
+        private var activeVibrator: Vibrator? = null
+        private var stopVibrationRunnable: Runnable? = null
+        private var notificationHandler: Handler? = null
+
         // Method to cache driver ID from MainActivity
         fun setDriverId(id: String?) {
             driverId = id
+        }
+
+        // Static method to stop notification effects (sound and vibration)
+        fun stopNotificationEffects(context: Context) {
+            try {
+                Log.d("CookieSenderService", "Stopping notification effects")
+
+                // Stop and release MediaPlayer
+                activeMediaPlayer?.let { mediaPlayer ->
+                    if (mediaPlayer.isPlaying) {
+                        mediaPlayer.stop()
+                        Log.d("CookieSenderService", "MediaPlayer stopped")
+                    }
+                    mediaPlayer.release()
+                    activeMediaPlayer = null
+                }
+
+                // Cancel vibration
+                activeVibrator?.let { vibrator ->
+                    vibrator.cancel()
+                    Log.d("CookieSenderService", "Vibration cancelled")
+                    activeVibrator = null
+                }
+
+                // Cancel scheduled vibration stop if it exists
+                stopVibrationRunnable?.let { runnable ->
+                    notificationHandler?.removeCallbacks(runnable)
+                    stopVibrationRunnable = null
+                    Log.d("CookieSenderService", "Scheduled vibration stop cancelled")
+                }
+
+                // Show feedback to user
+                Toast.makeText(context, "Notification silenced", Toast.LENGTH_SHORT).show()
+
+            } catch (e: Exception) {
+                Log.e("CookieSenderService", "Error stopping notification effects", e)
+            }
         }
     }
 
@@ -89,16 +139,35 @@ class CookieSenderService : Service() {
         // Create notification channels
         createNotificationChannels()
 
-        // Acquire partial wake lock to keep CPU running while service is active
+        // Initialize the static handler reference
+        notificationHandler = handler
+
+        // Acquire enhanced wake locks to keep service running on locked device
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
+
+        // Partial wake lock to keep CPU running
+        partialWakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
-            "MikMik:OrderCheckWakeLock"
+            "MikMik:OrderCheckPartialWakeLock"
         )
-        wakeLock?.acquire(30 * 60 * 1000L) // 30 minutes max
+        partialWakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours for maximum persistence
+
+        // Screen dim wake lock for notification visibility
+        try {
+            @Suppress("DEPRECATION")
+            screenWakeLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "MikMik:OrderCheckScreenWakeLock"
+            )
+            Log.d("CookieSenderService", "Screen wake lock created successfully")
+        } catch (e: Exception) {
+            Log.w("CookieSenderService", "Could not create screen wake lock", e)
+        }
 
         // Set up service restart alarm
         setupServiceRestartAlarm()
+
+        Log.d("CookieSenderService", "Service created with enhanced wake locks")
     }
 
     private fun setupServiceRestartAlarm() {
@@ -124,26 +193,31 @@ class CookieSenderService : Service() {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
         // Set a repeating alarm every 15 minutes to ensure service keeps running
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + (15 * 60 * 1000), // 15 minutes
-                pendingIntent
-            )
-        } else {
-            alarmManager.setRepeating(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + (15 * 60 * 1000), // 15 minutes
-                15 * 60 * 1000, // Repeat every 15 minutes
-                pendingIntent
-            )
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + (15 * 60 * 1000), // 15 minutes
+                    pendingIntent
+                )
+            } else {
+                alarmManager.setRepeating(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + (15 * 60 * 1000), // 15 minutes
+                    15 * 60 * 1000, // Repeat every 15 minutes
+                    pendingIntent
+                )
+            }
+            Log.d("CookieSenderService", "Service restart alarm set successfully")
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Failed to set service restart alarm", e)
         }
-
-        Log.d("CookieSenderService", "Service restart alarm set")
     }
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = getSystemService(NotificationManager::class.java)
+
             // Service notification channel (low priority)
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
@@ -152,59 +226,54 @@ class CookieSenderService : Service() {
             ).apply {
                 description = "Background service to check for pending orders"
                 setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
             }
 
-            // First, create the channel without sound or vibration
+            // High-priority order notification channel optimized for locked devices
             val orderChannel = NotificationChannel(
                 ORDER_CHANNEL_ID,
                 "New Orders",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Notifications for new orders"
+                description = "Critical notifications for new orders"
                 enableLights(true)
                 lightColor = Color.RED
-                // Don't set vibration here as we'll handle it manually
-                enableVibration(false)
+                enableVibration(true)
                 setShowBadge(true)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                setBypassDnd(true)
+                setBypassDnd(true) // Bypass Do Not Disturb
+                importance = NotificationManager.IMPORTANCE_HIGH
+
+                // Custom vibration pattern for driver alerts
+                vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 1000)
+
+                // Set custom sound
+                try {
+                    val soundUri = getRawUri(R.raw.new_order_sound)
+                    setSound(
+                        soundUri,
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setFlags(AudioAttributes.FLAG_AUDIBILITY_ENFORCED)
+                            .build()
+                    )
+                    Log.d("CookieSenderService", "Custom notification sound set: $soundUri")
+                } catch (e: Exception) {
+                    Log.e("CookieSenderService", "Error setting custom sound", e)
+                }
             }
 
-            // Get the notification manager
-            val notificationManager = getSystemService(NotificationManager::class.java)
-
-            // Create both channels first
+            // Create both channels
             notificationManager.createNotificationChannel(serviceChannel)
             notificationManager.createNotificationChannel(orderChannel)
-
-            // Now set the sound specifically (this is important for some devices)
-            try {
-                // Make sure to use getRawUri helper method to get the correct URI
-                val soundUri = getRawUri(R.raw.new_order_sound)
-
-                // Get the channel again and set sound
-                val channel = notificationManager.getNotificationChannel(ORDER_CHANNEL_ID)
-                channel.setSound(
-                    soundUri,
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-
-                // Update the channel with sound
-                notificationManager.createNotificationChannel(channel)
-
-                Log.d("CookieSenderService", "Notification sound set to: $soundUri")
-            } catch (e: Exception) {
-                Log.e("CookieSenderService", "Error setting notification sound", e)
-            }
         }
     }
 
-    // Add this helper method to get the correct URI for the raw resource
+    // Helper method to get the correct URI for the raw resource
     private fun getRawUri(rawResId: Int): Uri {
-        return Uri.parse("android.resource://" + packageName + "/" + rawResId)
+        return Uri.parse("android.resource://$packageName/$rawResId")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -241,11 +310,12 @@ class CookieSenderService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("ZooBox Hero")
-            .setContentText("Checking for new orders")
+            .setContentTitle("ZooBox Hero Driver")
+            .setContentText("Active - Monitoring for new orders")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
 
@@ -259,31 +329,72 @@ class CookieSenderService : Service() {
         // Clean up resources
         handler.removeCallbacks(checkOrdersRunnable)
 
-        // Release wake lock if it's still held
-        if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
+        // Stop any active notification effects
+        activeMediaPlayer?.let {
+            try {
+                if (it.isPlaying) {
+                    it.stop()
+                }
+                it.release()
+            } catch (e: Exception) {
+                Log.e("CookieSenderService", "Error stopping media player", e)
+            }
+            activeMediaPlayer = null
+        }
+
+        activeVibrator?.let {
+            try {
+                it.cancel()
+            } catch (e: Exception) {
+                Log.e("CookieSenderService", "Error stopping vibrator", e)
+            }
+            activeVibrator = null
+        }
+
+        // Release wake locks
+        try {
+            partialWakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+            screenWakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Error releasing wake locks", e)
         }
 
         // Try to restart the service if it's being destroyed
-        val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
-            action = "com.zoobox.hero.RESTART_SERVICE"
+        try {
+            val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
+                action = "com.zoobox.hero.RESTART_SERVICE"
+            }
+            sendBroadcast(restartServiceIntent)
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Error sending restart broadcast", e)
         }
-        sendBroadcast(restartServiceIntent)
 
-        Log.d("CookieSenderService", "Service destroyed, attempting restart")
+        Log.d("CookieSenderService", "Service destroyed, restart attempted")
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
 
         // This gets called when the user swipes away the app from recent tasks
-        Log.d("CookieSenderService", "Task removed, ensuring service keeps running")
+        Log.d("CookieSenderService", "Task removed, ensuring service persistence")
 
         // Try to restart the service
-        val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
-            action = "com.zoobox.hero.RESTART_SERVICE"
+        try {
+            val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
+                action = "com.zoobox.hero.RESTART_SERVICE"
+            }
+            sendBroadcast(restartServiceIntent)
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Error restarting after task removal", e)
         }
-        sendBroadcast(restartServiceIntent)
     }
 
     private fun getDriverIdCookie(): String? {
@@ -363,14 +474,37 @@ class CookieSenderService : Service() {
 
     private fun showOrderNotification(message: String, tab: String = "food") {
         try {
+            // Acquire screen wake lock temporarily for notification
+            try {
+                screenWakeLock?.let { wakeLock ->
+                    if (!wakeLock.isHeld) {
+                        wakeLock.acquire(30000) // 30 seconds
+                        Log.d("CookieSenderService", "Screen wake lock acquired for notification")
+
+                        // Schedule release
+                        handler.postDelayed({
+                            try {
+                                if (wakeLock.isHeld) {
+                                    wakeLock.release()
+                                    Log.d("CookieSenderService", "Screen wake lock released")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("CookieSenderService", "Error releasing screen wake lock", e)
+                            }
+                        }, 30000)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("CookieSenderService", "Could not acquire screen wake lock", e)
+            }
+
             // Create intent with specific target URL based on tab
             val targetUrl = "https://mikmik.site/heroes/pending_orders.php?tab=$tab"
 
             val notificationIntent = Intent(this, MainActivity::class.java).apply {
                 putExtra("ORDER_NOTIFICATION", true)
-                // Add the specific URL to open when notification is clicked with tab parameter
                 putExtra("TARGET_URL", targetUrl)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
             val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -386,64 +520,106 @@ class CookieSenderService : Service() {
                 pendingIntentFlags
             )
 
-            // Get custom sound URI
-            val soundUri = getRawUri(R.raw.new_order_sound)
-
-            // Create pattern vibration - typical driver notification pattern
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            // Handle vibration
+            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            activeVibrator = vibrator
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                // Use existing custom vibration pattern
+                // Enhanced vibration pattern for locked device
                 val pattern = longArrayOf(
-                    300, 300, 200, 200, 1000, 100, 100, 300, 1600, 300,
-                    1300, 400, 1200, 100, 500, 200, 200, 300, 200, 300
+                    0, 800, 200, 800, 200, 1200, 300, 800, 200, 800
                 )
 
-                // Calculate how many times to repeat to fill 30 seconds
-                val totalPatternTime = pattern.sum() // Sum of all elements in the pattern
-                val repetitions = (30000 / totalPatternTime).toInt() // How many times to repeat to fill 30s
+                // Create repeating pattern for 30 seconds
+                val repeatedPattern = mutableListOf<Long>()
+                val patternDuration = pattern.sum()
+                val repetitions = (30000 / patternDuration).toInt().coerceAtLeast(1)
 
-                // Create a new array big enough to hold the repeated pattern
-                val repeatedPattern = LongArray(pattern.size * repetitions)
-
-                // Fill the array with the repeated pattern
                 for (i in 0 until repetitions) {
-                    for (j in pattern.indices) {
-                        repeatedPattern[i * pattern.size + j] = pattern[j]
-                    }
+                    repeatedPattern.addAll(pattern.toList())
                 }
 
-                // Create the vibration effect with the repeated pattern (no repetition needed since we built a 30s pattern)
-                val vibrationEffect = android.os.VibrationEffect.createWaveform(
-                    repeatedPattern,
-                    -1 // Don't repeat since we already built a 30s pattern
+                val vibrationEffect = VibrationEffect.createWaveform(
+                    repeatedPattern.toLongArray(),
+                    -1 // Don't repeat since we built the full 30s pattern
                 )
-
-                // Start the vibration
                 vibrator.vibrate(vibrationEffect)
-
             } else {
-                // For older devices
-                // We can't easily create the same complex pattern
-                // So we'll use the simpler alternating pattern
                 @Suppress("DEPRECATION")
-
-                // Pattern: 0ms delay, then alternating 500ms vibrate, 200ms pause - repeated
-                val pattern = longArrayOf(0, 500, 200, 500, 200, 500, 200, 500, 200, 1000, 500)
-                vibrator.vibrate(pattern, 0) // 0 means repeat from index 0
-
-                // Schedule to stop after 30 seconds
-                handler.postDelayed({
-                    vibrator.cancel()
-                }, 30000)
+                val pattern = longArrayOf(0, 800, 200, 800, 200, 1200, 300, 800)
+                vibrator.vibrate(pattern, 0) // Repeat from index 0
             }
 
+            // Schedule vibration stop
+            stopVibrationRunnable = Runnable {
+                try {
+                    vibrator.cancel()
+                    activeVibrator = null
+                    stopVibrationRunnable = null
+                    Log.d("CookieSenderService", "Vibration stopped after timeout")
+                } catch (e: Exception) {
+                    Log.e("CookieSenderService", "Error stopping vibration", e)
+                }
+            }
+            handler.postDelayed(stopVibrationRunnable!!, 30000)
+
+            // Handle sound
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                if (audioManager.ringerMode != AudioManager.RINGER_MODE_SILENT) {
+                    val soundUri = getRawUri(R.raw.new_order_sound)
+                    val mediaPlayer = MediaPlayer()
+                    activeMediaPlayer = mediaPlayer
+
+                    mediaPlayer.setDataSource(this, soundUri)
+                    mediaPlayer.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                            .setFlags(AudioAttributes.FLAG_AUDIBILITY_ENFORCED)
+                            .build()
+                    )
+
+                    mediaPlayer.setOnCompletionListener { player ->
+                        try {
+                            player.release()
+                            if (activeMediaPlayer == player) {
+                                activeMediaPlayer = null
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CookieSenderService", "Error releasing media player", e)
+                        }
+                    }
+
+                    mediaPlayer.setOnErrorListener { player, what, extra ->
+                        Log.e("CookieSenderService", "MediaPlayer error: $what, $extra")
+                        try {
+                            player.release()
+                            if (activeMediaPlayer == player) {
+                                activeMediaPlayer = null
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CookieSenderService", "Error releasing media player on error", e)
+                        }
+                        false
+                    }
+
+                    mediaPlayer.prepare()
+                    mediaPlayer.start()
+                    Log.d("CookieSenderService", "Notification sound started")
+                }
+            } catch (e: Exception) {
+                Log.e("CookieSenderService", "Error playing notification sound", e)
+                activeMediaPlayer = null
+            }
+
+            // Create high-priority notification optimized for locked devices
             val notificationId = NOTIFICATION_ID + 100 + (System.currentTimeMillis() % 100).toInt()
 
             val notificationBuilder = NotificationCompat.Builder(this, ORDER_CHANNEL_ID)
-                .setContentTitle("📢 New Order Available!")
+                .setContentTitle("🚨 NEW ORDER ALERT!")
                 .setContentText(message)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setStyle(NotificationCompat.BigTextStyle().bigText("🚨 NEW ORDER ALERT!\n\n$message\n\nTap to view details"))
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setLargeIcon(BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
                 .setContentIntent(pendingIntent)
@@ -453,84 +629,30 @@ class CookieSenderService : Service() {
                 .setAutoCancel(true)
                 .setColorized(true)
                 .setColor(Color.RED)
+                .setDefaults(0) // No defaults, we handle everything manually
+                .setOnlyAlertOnce(false) // Always alert
+                .setTimeoutAfter(60000) // Auto dismiss after 1 minute
 
-            // For pre-Oreo devices, explicitly set sound
+            // For pre-Oreo devices, set sound explicitly
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-                notificationBuilder.setSound(soundUri)
-                // Also manually play the sound for maximum compatibility
-                try {
-                    val mediaPlayer = android.media.MediaPlayer()
-                    mediaPlayer.setDataSource(this, soundUri)
-                    mediaPlayer.setAudioAttributes(
-                        android.media.AudioAttributes.Builder()
-                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
-                            .build()
-                    )
-                    mediaPlayer.setOnCompletionListener { it.release() }
-                    mediaPlayer.prepare()
-                    mediaPlayer.start()
-                } catch (e: Exception) {
-                    Log.e("CookieSenderService", "Error playing sound", e)
-                }
-            } else {
-                // For Oreo and above, manually play sound as a fallback
-                // This is a workaround for MIUI and other custom ROMs that might ignore channel settings
-                try {
-                    val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-                    if (audioManager.getRingerMode() != android.media.AudioManager.RINGER_MODE_SILENT) {
-                        val mediaPlayer = android.media.MediaPlayer()
-                        mediaPlayer.setDataSource(this, soundUri)
-                        mediaPlayer.setAudioAttributes(
-                            android.media.AudioAttributes.Builder()
-                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                                .build()
-                        )
-                        mediaPlayer.setOnCompletionListener { it.release() }
-                        mediaPlayer.prepare()
-                        mediaPlayer.start()
-                    }
-                } catch (e: Exception) {
-                    Log.e("CookieSenderService", "Error playing sound manually", e)
-                }
-            }
-
-            // Try to wake up the screen
-            try {
-                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-                val wakeLock = powerManager.newWakeLock(
-                    PowerManager.FULL_WAKE_LOCK or
-                            PowerManager.ACQUIRE_CAUSES_WAKEUP or
-                            PowerManager.ON_AFTER_RELEASE,
-                    "ZooBox:NotificationWakeLock"
-                )
-                wakeLock.acquire(30000) // 30 seconds
-
-                // Release the wake lock after a delay
-                handler.postDelayed({
-                    if (wakeLock.isHeld) {
-                        wakeLock.release()
-                    }
-                }, 30000)
-            } catch (e: Exception) {
-                Log.e("CookieSenderService", "Error acquiring wake lock", e)
+                notificationBuilder.setSound(getRawUri(R.raw.new_order_sound))
+                notificationBuilder.setVibrate(longArrayOf(0, 800, 200, 800, 200, 1200))
             }
 
             val notification = notificationBuilder.build()
 
+            // Additional flags for locked device visibility
+            notification.flags = notification.flags or
+                    Notification.FLAG_INSISTENT or
+                    Notification.FLAG_SHOW_LIGHTS
+
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.notify(notificationId, notification)
 
-            // Schedule to stop vibration after 30 seconds for all Android versions
-            handler.postDelayed({
-                vibrator.cancel()
-                Log.d("CookieSenderService", "Vibration stopped after 30 seconds")
-            }, 30000)
+            Log.d("CookieSenderService", "High-priority notification sent (ID: $notificationId) for locked device with URL: $targetUrl")
 
-            Log.d("CookieSenderService", "Notification with ID: $notificationId sent with sound: $soundUri, URL: $targetUrl")
         } catch (e: Exception) {
-            Log.e("CookieSenderService", "Error showing notification", e)
+            Log.e("CookieSenderService", "Error showing order notification", e)
         }
     }
 }

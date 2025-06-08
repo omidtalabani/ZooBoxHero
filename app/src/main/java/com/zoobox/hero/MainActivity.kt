@@ -25,6 +25,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -55,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.zoobox.hero.ui.theme.ZooBoxHeroTheme
 
@@ -74,6 +76,52 @@ class MainActivity : ComponentActivity(), LocationListener {
 
     // Store last known location for providing to the WebView immediately on page load
     private var lastKnownLocation: Location? = null
+
+    // App foreground observer
+    private val appForegroundObserver = AppForegroundObserver()
+
+    // Override key events to handle volume button presses
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                // Check if app is in foreground before silencing
+                if (AppForegroundObserver.isAppInForeground) {
+                    try {
+                        // Call the silencer method from the service
+                        CookieSenderService.stopNotificationEffects(this)
+                        Log.d("MainActivity", "Volume button pressed - notification silenced")
+
+                        // Provide haptic feedback to confirm the action
+                        performHapticFeedback(this)
+
+                        // Return true to consume the event (prevent volume change)
+                        return true
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error silencing notification with volume button", e)
+                    }
+                }
+
+                // If app is not in foreground or silencing failed, allow normal volume behavior
+                super.onKeyDown(keyCode, event)
+            }
+            else -> super.onKeyDown(keyCode, event)
+        }
+    }
+
+    // Also handle key up events to prevent volume change when we handle the key down
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                // If app is in foreground, consume the key up event too
+                if (AppForegroundObserver.isAppInForeground) {
+                    true // Consume the event
+                } else {
+                    super.onKeyUp(keyCode, event)
+                }
+            }
+            else -> super.onKeyUp(keyCode, event)
+        }
+    }
 
     // GPS monitoring runnable with immediate detection of enabling
     private val gpsMonitorRunnable = object : Runnable {
@@ -282,6 +330,9 @@ class MainActivity : ComponentActivity(), LocationListener {
 
         // Restore cookies before anything else
         restoreCookiesFromPreferences()
+
+        // Register the app foreground observer
+        ProcessLifecycleOwner.get().lifecycle.addObserver(appForegroundObserver)
 
         // Initialize system services
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager

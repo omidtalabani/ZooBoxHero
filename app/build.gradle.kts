@@ -55,8 +55,11 @@ dependencies {
     // Add SwipeRefresh for Compose
     implementation("com.google.accompanist:accompanist-swiperefresh:0.32.0")
 
-// Add this dependency for SwipeRefreshLayout
+    // Add this dependency for SwipeRefreshLayout
     implementation ("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
+    // Add this line for ProcessLifecycleOwner - THIS IS THE NEW LINE
+    implementation("androidx.lifecycle:lifecycle-process:2.6.2")
 
     // Add Firebase dependencies
     implementation(platform(libs.firebase.bom))
