@@ -1,5 +1,6 @@
 package com.zoobox.hero
 
+import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -20,7 +21,15 @@ fun SplashScreen(onSplashScreenComplete: () -> Unit) {
 
     LaunchedEffect(key1 = true) {
         delay(5000) // 5 seconds for your video
-        onSplashScreenComplete()
+
+        // After splash ends, always go to permission activity to check
+        val intent = Intent(context, PermissionActivity::class.java)
+        context.startActivity(intent)
+
+        // If this is called from MainActivity, finish it
+        if (context is MainActivity) {
+            context.finish()
+        }
     }
 
     Box(

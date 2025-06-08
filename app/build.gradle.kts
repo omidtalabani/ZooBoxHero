@@ -49,18 +49,16 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation("androidx.compose.material:material-icons-extended") // <-- Add this for all extended icons
     implementation ("com.squareup.okhttp3:okhttp:4.10.0")
     implementation ("com.squareup.okhttp3:okhttp-sse:4.10.0")
     implementation ("com.onesignal:OneSignal:[5.0.0, 5.99.99]")
     // Add SwipeRefresh for Compose
     implementation("com.google.accompanist:accompanist-swiperefresh:0.32.0")
-
     // Add this dependency for SwipeRefreshLayout
     implementation ("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
-
     // Add this line for ProcessLifecycleOwner - THIS IS THE NEW LINE
     implementation("androidx.lifecycle:lifecycle-process:2.6.2")
-
     // Add Firebase dependencies
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)

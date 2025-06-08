@@ -189,6 +189,136 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Configure window to respect system windows like the status bar
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Check if we're coming from permission activity
+        val skipSplash = intent.getBooleanExtra("SKIP_SPLASH", false)
+
+        if (!skipSplash) {
+            // Check permissions before showing main content
+            if (!areAllPermissionsGranted()) {
+                // Redirect to permission activity
+                startActivity(Intent(this, PermissionActivity::class.java))
+                finish()
+                return
+            }
+        }
+
+        // Restore cookies before anything else
+        restoreCookiesFromPreferences()
+
+        // Register the app foreground observer
+        ProcessLifecycleOwner.get().lifecycle.addObserver(appForegroundObserver)
+
+        // Initialize system services
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        // Create notification channel for Android 8.0+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "order_notifications"
+            val channel = NotificationChannel(
+                channelId,
+                "Order Notifications",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        // Request battery optimization exemption
+        requestBatteryOptimizationExemption()
+
+        // Register network callback
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+
+        // Start GPS monitoring with faster checks (every second)
+        Handler(Looper.getMainLooper()).post(gpsMonitorRunnable)
+
+        // Start cookie saving task
+        Handler(Looper.getMainLooper()).post(cookieSavingRunnable)
+
+        // First check if GPS and internet are enabled
+        if (!isGpsEnabled()) {
+            showEnableLocationDialog()
+        } else if (!isInternetConnected()) {
+            showInternetRequiredDialog()
+        } else {
+            // Both are enabled, continue with normal app flow
+            continueAppFlow()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // Always check permissions when app resumes (in case user changed them in settings)
+        if (!areAllPermissionsGranted()) {
+            startActivity(Intent(this, PermissionActivity::class.java))
+            finish()
+            return
+        }
+
+        // When returning from settings, check if enabled
+        if (isGpsEnabled()) {
+            dismissGpsDialog()
+        }
+
+        if (isInternetConnected()) {
+            dismissInternetDialog()
+        }
+
+        // If both are enabled now, continue
+        if (isGpsEnabled() && isInternetConnected()) {
+            continueAppFlow()
+        }
+    }
+
+    // Permission checking functions
+    private fun areAllPermissionsGranted(): Boolean {
+        return checkLocationPermission() &&
+                checkBackgroundLocationPermission() &&
+                checkNotificationPermission() &&
+                checkBatteryOptimization()
+    }
+
+    private fun checkLocationPermission(): Boolean {
+        return arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+    }
+
+    private fun checkBackgroundLocationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else true
+    }
+
+    private fun checkNotificationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else true
+    }
+
+    private fun checkBatteryOptimization(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            powerManager.isIgnoringBatteryOptimizations(packageName)
+        } else true
+    }
+
     // Method to start background service
     private fun startBackgroundService() {
         // First try to get driver_id from WebView cookies
@@ -319,60 +449,6 @@ class MainActivity : ComponentActivity(), LocationListener {
                     Log.e("MainActivity", "Failed to request battery optimization exemption", e)
                 }
             }
-        }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Configure window to respect system windows like the status bar
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // Restore cookies before anything else
-        restoreCookiesFromPreferences()
-
-        // Register the app foreground observer
-        ProcessLifecycleOwner.get().lifecycle.addObserver(appForegroundObserver)
-
-        // Initialize system services
-        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-
-        // Create notification channel for Android 8.0+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelId = "order_notifications"
-            val channel = NotificationChannel(
-                channelId,
-                "Order Notifications",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
-        }
-
-        // Request battery optimization exemption
-        requestBatteryOptimizationExemption()
-
-        // Register network callback
-        val networkRequest = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
-
-        // Start GPS monitoring with faster checks (every second)
-        Handler(Looper.getMainLooper()).post(gpsMonitorRunnable)
-
-        // Start cookie saving task
-        Handler(Looper.getMainLooper()).post(cookieSavingRunnable)
-
-        // First check if GPS and internet are enabled
-        if (!isGpsEnabled()) {
-            showEnableLocationDialog()
-        } else if (!isInternetConnected()) {
-            showInternetRequiredDialog()
-        } else {
-            // Both are enabled, continue with normal app flow
-            continueAppFlow()
         }
     }
 
@@ -509,17 +585,11 @@ class MainActivity : ComponentActivity(), LocationListener {
 
                     if (showSplash.value) {
                         SplashScreen {
-                            // When splash screen completes, check permissions
-                            if (areLocationPermissionsGranted()) {
-                                // If permissions already granted, show main content
-                                showSplash.value = false
-                                // Start location updates
-                                startLocationUpdates()
-                            } else {
-                                // If permissions not granted, start permission activity
-                                startActivity(Intent(this, PermissionActivity::class.java))
-                                finish()
-                            }
+                            // When splash screen completes, just show main content
+                            // (permissions already checked in onCreate)
+                            showSplash.value = false
+                            // Start location updates
+                            startLocationUpdates()
                         }
                     } else {
                         MainContent()
@@ -539,19 +609,10 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
     }
 
-    private fun areLocationPermissionsGranted(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(
-                    this, Manifest.permission.ACCESS_COARSE_LOCATION
-                ) == PackageManager.PERMISSION_GRANTED
-    }
-
     private fun startLocationUpdates() {
         try {
             // Check if we have permission before requesting updates
-            if (areLocationPermissionsGranted()) {
+            if (checkLocationPermission()) {
                 // Request location updates from GPS provider
                 if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                     if (ActivityCompat.checkSelfPermission(
@@ -668,24 +729,6 @@ class MainActivity : ComponentActivity(), LocationListener {
         // If GPS provider is disabled, show dialog
         if (provider == LocationManager.GPS_PROVIDER) {
             showEnableLocationDialog()
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-
-        // When returning from settings, check if enabled
-        if (isGpsEnabled()) {
-            dismissGpsDialog()
-        }
-
-        if (isInternetConnected()) {
-            dismissInternetDialog()
-        }
-
-        // If both are enabled now, continue
-        if (isGpsEnabled() && isInternetConnected()) {
-            continueAppFlow()
         }
     }
 
