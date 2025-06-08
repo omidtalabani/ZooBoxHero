@@ -26,6 +26,7 @@ import android.util.Log
 import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.work.*
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
@@ -48,12 +49,26 @@ class CookieSenderService : Service() {
     // Keep track of the last notification time to avoid spamming
     private var lastNotificationTime = 0L
 
+    // Service restart counter for exponential backoff
+    private var restartCount = 0
+
+    // Multiple restart handlers for redundancy
+    private val restartHandler1 = Handler(Looper.getMainLooper())
+    private val restartHandler2 = Handler(Looper.getMainLooper())
+    private val restartHandler3 = Handler(Looper.getMainLooper())
+
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "order_check_service"
         private const val ORDER_CHANNEL_ID = "order_notifications"
         private const val RESTART_SERVICE_ALARM_ID = 12345
+        private const val BACKUP_ALARM_ID = 12346
+        private const val IMMEDIATE_RESTART_ALARM_ID = 12347
         private var driverId: String? = null
+
+        // Service state tracking
+        @Volatile
+        private var isServiceRunning = false
 
         // Static references to track active notification effects
         private var activeMediaPlayer: MediaPlayer? = null
@@ -65,6 +80,9 @@ class CookieSenderService : Service() {
         fun setDriverId(id: String?) {
             driverId = id
         }
+
+        // Check if service is running
+        fun isRunning(): Boolean = isServiceRunning
 
         // Static method to stop notification effects (sound and vibration)
         fun stopNotificationEffects(context: Context) {
@@ -107,6 +125,9 @@ class CookieSenderService : Service() {
     // Runnable that sends the cookie and reschedules itself
     private val checkOrdersRunnable = object : Runnable {
         override fun run() {
+            // Mark service as active
+            isServiceRunning = true
+
             val cachedDriverId = driverId
 
             if (cachedDriverId != null) {
@@ -128,13 +149,31 @@ class CookieSenderService : Service() {
                 }
             }
 
-            // Schedule next run
+            // Schedule next run with multiple handlers for redundancy
             handler.postDelayed(this, sendInterval)
+
+            // Also schedule with backup handlers
+            restartHandler1.postDelayed({
+                if (!isServiceRunning) {
+                    Log.d("CookieSenderService", "Service not running detected by backup handler 1")
+                    triggerImmediateRestart()
+                }
+            }, sendInterval + 5000) // 5 seconds after main check
+
+            restartHandler2.postDelayed({
+                if (!isServiceRunning) {
+                    Log.d("CookieSenderService", "Service not running detected by backup handler 2")
+                    triggerImmediateRestart()
+                }
+            }, sendInterval + 10000) // 10 seconds after main check
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+
+        isServiceRunning = true
+        Log.d("CookieSenderService", "Service created - marking as running")
 
         // Create notification channels
         createNotificationChannels()
@@ -145,72 +184,218 @@ class CookieSenderService : Service() {
         // Acquire enhanced wake locks to keep service running on locked device
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
 
-        // Partial wake lock to keep CPU running
-        partialWakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "MikMik:OrderCheckPartialWakeLock"
-        )
-        partialWakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours for maximum persistence
+        // Partial wake lock to keep CPU running - use indefinite duration
+        try {
+            partialWakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "ZooBox:OrderCheckPartialWakeLock"
+            )
+            partialWakeLock?.acquire() // Acquire indefinitely
+            Log.d("CookieSenderService", "Partial wake lock acquired")
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Failed to acquire partial wake lock", e)
+        }
 
         // Screen dim wake lock for notification visibility
         try {
             @Suppress("DEPRECATION")
             screenWakeLock = powerManager.newWakeLock(
                 PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "MikMik:OrderCheckScreenWakeLock"
+                "ZooBox:OrderCheckScreenWakeLock"
             )
             Log.d("CookieSenderService", "Screen wake lock created successfully")
         } catch (e: Exception) {
             Log.w("CookieSenderService", "Could not create screen wake lock", e)
         }
 
-        // Set up service restart alarm
-        setupServiceRestartAlarm()
+        // Set up multiple restart mechanisms immediately
+        setupImmediateRestartMechanisms()
+        setupServiceRestartAlarms()
 
-        Log.d("CookieSenderService", "Service created with enhanced wake locks")
+        // Schedule WorkManager backup job
+        scheduleBackupWorker()
+
+        // Schedule aggressive monitoring
+        scheduleAggressiveMonitoring()
+
+        Log.d("CookieSenderService", "Service created with all restart mechanisms")
     }
 
-    private fun setupServiceRestartAlarm() {
-        // Intent that will be sent by the AlarmManager
-        val restartIntent = Intent(this, BootCompletedReceiver::class.java).apply {
-            action = "com.mikmik.hero.RESTART_SERVICE"
-        }
-
-        val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-
-        val pendingIntent = PendingIntent.getBroadcast(
-            this,
-            RESTART_SERVICE_ALARM_ID,
-            restartIntent,
-            pendingIntentFlags
-        )
-
-        // Get the alarm manager
+    private fun setupImmediateRestartMechanisms() {
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        // Set a repeating alarm every 15 minutes to ensure service keeps running
+        // Immediate restart alarm (every 30 seconds)
+        val immediateRestartIntent = Intent(this, BootCompletedReceiver::class.java).apply {
+            action = "com.zoobox.hero.IMMEDIATE_RESTART"
+        }
+
+        val immediatePendingIntent = PendingIntent.getBroadcast(
+            this,
+            IMMEDIATE_RESTART_ALARM_ID,
+            immediateRestartIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    SystemClock.elapsedRealtime() + (15 * 60 * 1000), // 15 minutes
-                    pendingIntent
+                    SystemClock.elapsedRealtime() + 30000, // 30 seconds
+                    immediatePendingIntent
                 )
             } else {
                 alarmManager.setRepeating(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    SystemClock.elapsedRealtime() + (15 * 60 * 1000), // 15 minutes
-                    15 * 60 * 1000, // Repeat every 15 minutes
-                    pendingIntent
+                    SystemClock.elapsedRealtime() + 30000,
+                    30000, // Every 30 seconds
+                    immediatePendingIntent
                 )
             }
-            Log.d("CookieSenderService", "Service restart alarm set successfully")
+            Log.d("CookieSenderService", "Immediate restart alarm set (30 seconds)")
         } catch (e: Exception) {
-            Log.e("CookieSenderService", "Failed to set service restart alarm", e)
+            Log.e("CookieSenderService", "Failed to set immediate restart alarm", e)
+        }
+    }
+
+    private fun setupServiceRestartAlarms() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+        // Primary restart alarm (every 5 minutes)
+        val primaryRestartIntent = Intent(this, BootCompletedReceiver::class.java).apply {
+            action = "com.zoobox.hero.RESTART_SERVICE"
+        }
+
+        val primaryPendingIntent = PendingIntent.getBroadcast(
+            this,
+            RESTART_SERVICE_ALARM_ID,
+            primaryRestartIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        // Backup restart alarm (every 10 minutes)
+        val backupRestartIntent = Intent(this, BootCompletedReceiver::class.java).apply {
+            action = "com.zoobox.hero.BACKUP_RESTART_SERVICE"
+        }
+
+        val backupPendingIntent = PendingIntent.getBroadcast(
+            this,
+            BACKUP_ALARM_ID,
+            backupRestartIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // Primary alarm every 5 minutes
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + (5 * 60 * 1000),
+                    primaryPendingIntent
+                )
+
+                // Backup alarm every 10 minutes
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + (10 * 60 * 1000),
+                    backupPendingIntent
+                )
+            } else {
+                // For older devices, use repeating alarms
+                alarmManager.setRepeating(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + (5 * 60 * 1000),
+                    5 * 60 * 1000,
+                    primaryPendingIntent
+                )
+
+                alarmManager.setRepeating(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + (10 * 60 * 1000),
+                    10 * 60 * 1000,
+                    backupPendingIntent
+                )
+            }
+            Log.d("CookieSenderService", "Multiple service restart alarms set successfully")
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Failed to set service restart alarms", e)
+        }
+    }
+
+    private fun scheduleBackupWorker() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .setRequiresBatteryNotLow(false)
+            .build()
+
+        // More frequent WorkManager checks
+        val workRequest = PeriodicWorkRequestBuilder<ServiceWatchdogWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.LINEAR, 1, TimeUnit.MINUTES)
+            .build()
+
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniquePeriodicWork(
+                "service_watchdog",
+                ExistingPeriodicWorkPolicy.REPLACE,
+                workRequest
+            )
+
+        Log.d("CookieSenderService", "WorkManager watchdog scheduled")
+    }
+
+    private fun scheduleAggressiveMonitoring() {
+        // Schedule multiple monitoring jobs with different intervals
+        val aggressiveWorkRequest = PeriodicWorkRequestBuilder<AggressiveServiceMonitor>(15, TimeUnit.MINUTES)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .build()
+
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniquePeriodicWork(
+                "aggressive_monitor",
+                ExistingPeriodicWorkPolicy.REPLACE,
+                aggressiveWorkRequest
+            )
+    }
+
+    private fun triggerImmediateRestart() {
+        Log.d("CookieSenderService", "Triggering immediate restart")
+
+        // Method 1: Direct restart
+        try {
+            val serviceIntent = Intent(applicationContext, CookieSenderService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                applicationContext.startForegroundService(serviceIntent)
+            } else {
+                applicationContext.startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Direct restart failed", e)
+        }
+
+        // Method 2: Broadcast restart
+        try {
+            val restartIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
+                action = "com.zoobox.hero.IMMEDIATE_RESTART"
+            }
+            sendBroadcast(restartIntent)
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "Broadcast restart failed", e)
         }
     }
 
@@ -277,9 +462,11 @@ class CookieSenderService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        isServiceRunning = true
+
         // Start as a foreground service with notification
         startForeground(NOTIFICATION_ID, createNotification())
-        Log.d("CookieSenderService", "Service started in foreground")
+        Log.d("CookieSenderService", "Service started in foreground (restart count: $restartCount)")
 
         // Try to recover driver ID from shared preferences if needed
         if (driverId == null) {
@@ -292,9 +479,10 @@ class CookieSenderService : Service() {
         }
 
         // Start checking for orders
+        handler.removeCallbacks(checkOrdersRunnable) // Remove any existing callbacks
         handler.post(checkOrdersRunnable)
 
-        // If service is killed by system, restart it
+        // If service is killed by system, restart it with sticky behavior
         return START_STICKY
     }
 
@@ -311,11 +499,12 @@ class CookieSenderService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ZooBox Hero Driver")
-            .setContentText("Active - Monitoring for new orders")
+            .setContentText("🟢 Active Monitoring - Orders: ${if (driverId != null) "Connected" else "Connecting"}")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 
@@ -326,8 +515,19 @@ class CookieSenderService : Service() {
     override fun onDestroy() {
         super.onDestroy()
 
+        isServiceRunning = false
+        restartCount++
+        Log.d("CookieSenderService", "Service destroyed (restart count: $restartCount) - IMMEDIATE RESTART TRIGGERED")
+
+        // Store restart count for tracking
+        val prefs = applicationContext.getSharedPreferences("ZooBoxPrefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt("service_restart_count", restartCount).apply()
+
         // Clean up resources
         handler.removeCallbacks(checkOrdersRunnable)
+        restartHandler1.removeCallbacksAndMessages(null)
+        restartHandler2.removeCallbacksAndMessages(null)
+        restartHandler3.removeCallbacksAndMessages(null)
 
         // Stop any active notification effects
         activeMediaPlayer?.let {
@@ -351,49 +551,111 @@ class CookieSenderService : Service() {
             activeVibrator = null
         }
 
-        // Release wake locks
-        try {
-            partialWakeLock?.let {
-                if (it.isHeld) {
-                    it.release()
-                }
-            }
-            screenWakeLock?.let {
-                if (it.isHeld) {
-                    it.release()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("CookieSenderService", "Error releasing wake locks", e)
-        }
+        // IMMEDIATE RESTART - Multiple methods simultaneously
+        restartServiceImmediately()
 
-        // Try to restart the service if it's being destroyed
-        try {
-            val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
-                action = "com.zoobox.hero.RESTART_SERVICE"
-            }
-            sendBroadcast(restartServiceIntent)
-        } catch (e: Exception) {
-            Log.e("CookieSenderService", "Error sending restart broadcast", e)
-        }
-
-        Log.d("CookieSenderService", "Service destroyed, restart attempted")
+        Log.d("CookieSenderService", "Service destroyed, immediate restart methods executed")
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
 
         // This gets called when the user swipes away the app from recent tasks
-        Log.d("CookieSenderService", "Task removed, ensuring service persistence")
+        Log.d("CookieSenderService", "🚨 TASK REMOVED - IMMEDIATE RESTART INITIATED")
 
-        // Try to restart the service
+        isServiceRunning = false
+
+        // IMMEDIATE restart when task is removed
+        restartServiceImmediately()
+
+        // Re-setup all alarms to ensure they survive task removal
+        setupImmediateRestartMechanisms()
+        setupServiceRestartAlarms()
+
+        Log.d("CookieSenderService", "Task removed - all restart mechanisms re-initialized")
+    }
+
+    private fun restartServiceImmediately() {
+        // Method 1: Immediate direct restart (no delay)
         try {
-            val restartServiceIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
-                action = "com.zoobox.hero.RESTART_SERVICE"
+            val serviceIntent = Intent(applicationContext, CookieSenderService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                applicationContext.startForegroundService(serviceIntent)
+            } else {
+                applicationContext.startService(serviceIntent)
             }
-            sendBroadcast(restartServiceIntent)
+            Log.d("CookieSenderService", "✅ Immediate direct service restart attempted")
         } catch (e: Exception) {
-            Log.e("CookieSenderService", "Error restarting after task removal", e)
+            Log.e("CookieSenderService", "❌ Error in immediate direct service restart", e)
+        }
+
+        // Method 2: Immediate broadcast restart
+        try {
+            val restartIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
+                action = "com.zoobox.hero.IMMEDIATE_RESTART"
+            }
+            sendBroadcast(restartIntent)
+            Log.d("CookieSenderService", "✅ Immediate broadcast restart attempted")
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "❌ Error in immediate broadcast restart", e)
+        }
+
+        // Method 3: Multiple delayed restarts (1s, 3s, 5s, 10s)
+        val delays = listOf(1000L, 3000L, 5000L, 10000L)
+        delays.forEach { delay ->
+            try {
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        val delayedServiceIntent = Intent(applicationContext, CookieSenderService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            applicationContext.startForegroundService(delayedServiceIntent)
+                        } else {
+                            applicationContext.startService(delayedServiceIntent)
+                        }
+                        Log.d("CookieSenderService", "✅ Delayed restart executed after ${delay}ms")
+                    } catch (e: Exception) {
+                        Log.e("CookieSenderService", "❌ Error in delayed restart after ${delay}ms", e)
+                    }
+                }, delay)
+            } catch (e: Exception) {
+                Log.e("CookieSenderService", "❌ Error setting up delayed restart for ${delay}ms", e)
+            }
+        }
+
+        // Method 4: Aggressive alarm restart
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val aggressiveRestartIntent = Intent(applicationContext, BootCompletedReceiver::class.java).apply {
+                action = "com.zoobox.hero.AGGRESSIVE_RESTART"
+            }
+
+            val aggressivePendingIntent = PendingIntent.getBroadcast(
+                applicationContext,
+                99999,
+                aggressiveRestartIntent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + 2000, // 2 seconds
+                    aggressivePendingIntent
+                )
+            } else {
+                alarmManager.set(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + 2000,
+                    aggressivePendingIntent
+                )
+            }
+            Log.d("CookieSenderService", "✅ Aggressive alarm restart set")
+        } catch (e: Exception) {
+            Log.e("CookieSenderService", "❌ Error setting aggressive alarm restart", e)
         }
     }
 

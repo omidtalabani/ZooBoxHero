@@ -59,6 +59,10 @@ dependencies {
     implementation ("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     // Add this line for ProcessLifecycleOwner - THIS IS THE NEW LINE
     implementation("androidx.lifecycle:lifecycle-process:2.6.2")
+
+    // WorkManager for enhanced background service reliability
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     // Add Firebase dependencies
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
