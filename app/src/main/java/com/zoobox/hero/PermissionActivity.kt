@@ -62,7 +62,7 @@ class PermissionActivity : ComponentActivity() {
 
     // Permission type enum
     private enum class PermissionType {
-        LOCATION, BACKGROUND_LOCATION, NOTIFICATION, BATTERY_OPTIMIZATION
+        LOCATION, BACKGROUND_LOCATION, NOTIFICATION, CAMERA, BATTERY_OPTIMIZATION
     }
 
     // SharedPreferences for first-time detection
@@ -85,6 +85,7 @@ class PermissionActivity : ComponentActivity() {
     private var permissionMonitoringJob: Job? = null
     private var isWaitingForLocationSettings = false
     private var isWaitingForNotificationSettings = false
+    private var isWaitingForCameraSettings = false
     private var isWaitingForBatterySettings = false
     private var isWaitingForBackgroundLocationSettings = false
 
@@ -155,6 +156,23 @@ class PermissionActivity : ComponentActivity() {
         }
     }
 
+    private val requestCameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.d("PermissionActivity", "Camera permission result: $isGranted")
+
+        if (!isGranted) {
+            permissionRequestCount[Manifest.permission.CAMERA] =
+                (permissionRequestCount[Manifest.permission.CAMERA] ?: 0) + 1
+            Log.d("PermissionActivity", "Camera permission denied ${permissionRequestCount[Manifest.permission.CAMERA]} times")
+            // Start monitoring for manual permission grant
+            startCameraPermissionMonitoring()
+        } else {
+            val stepIndex = findStepIndexByType(PermissionType.CAMERA)
+            handlePermissionResult(stepIndex, isGranted)
+        }
+    }
+
     private val batteryOptimizationLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -207,6 +225,7 @@ class PermissionActivity : ComponentActivity() {
                         permissionAttempts = getCurrentPermissionAttempts(),
                         isWaitingForLocationSettings = isWaitingForLocationSettings,
                         isWaitingForNotificationSettings = isWaitingForNotificationSettings,
+                        isWaitingForCameraSettings = isWaitingForCameraSettings,
                         isWaitingForBatterySettings = isWaitingForBatterySettings,
                         isWaitingForBackgroundLocationSettings = isWaitingForBackgroundLocationSettings
                     )
@@ -311,6 +330,37 @@ class PermissionActivity : ComponentActivity() {
         }
     }
 
+    private fun startCameraPermissionMonitoring() {
+        isWaitingForCameraSettings = true
+        Log.d("PermissionActivity", "Starting camera permission monitoring")
+
+        permissionMonitoringJob?.cancel()
+        permissionMonitoringJob = lifecycleScope.launch {
+            var elapsedTime = 0L
+
+            while (isWaitingForCameraSettings && elapsedTime < MAX_MONITORING_TIME) {
+                delay(PERMISSION_CHECK_INTERVAL)
+                elapsedTime += PERMISSION_CHECK_INTERVAL
+
+                val isGranted = checkCameraPermission()
+                Log.d("PermissionActivity", "Monitoring camera permission - Elapsed: ${elapsedTime}ms, Granted: $isGranted")
+
+                if (isGranted) {
+                    Log.d("PermissionActivity", "Camera permission granted detected!")
+                    isWaitingForCameraSettings = false
+                    val stepIndex = findStepIndexByType(PermissionType.CAMERA)
+                    handlePermissionResult(stepIndex, true)
+                    break
+                }
+            }
+
+            if (elapsedTime >= MAX_MONITORING_TIME) {
+                Log.d("PermissionActivity", "Camera permission monitoring timeout")
+                isWaitingForCameraSettings = false
+            }
+        }
+    }
+
     private fun startBatteryOptimizationMonitoring() {
         isWaitingForBatterySettings = true
         Log.d("PermissionActivity", "Starting battery optimization monitoring")
@@ -357,9 +407,10 @@ class PermissionActivity : ComponentActivity() {
                 val locationGranted = checkLocationPermission()
                 val backgroundLocationGranted = checkBackgroundLocationPermission()
                 val notificationGranted = checkNotificationPermission()
+                val cameraGranted = checkCameraPermission()
                 val batteryOptimizationDisabled = checkBatteryOptimization()
 
-                Log.d("PermissionActivity", "Comprehensive monitoring - Location: $locationGranted, Background: $backgroundLocationGranted, Notification: $notificationGranted, Battery: $batteryOptimizationDisabled")
+                Log.d("PermissionActivity", "Comprehensive monitoring - Location: $locationGranted, Background: $backgroundLocationGranted, Notification: $notificationGranted, Camera: $cameraGranted, Battery: $batteryOptimizationDisabled")
 
                 // Check if any permission state changed
                 var permissionChanged = false
@@ -378,6 +429,12 @@ class PermissionActivity : ComponentActivity() {
                 val notificationStepIndex = findStepIndexByType(PermissionType.NOTIFICATION)
                 if (notificationStepIndex >= 0 && notificationGranted && !permissionSteps[notificationStepIndex].isGranted) {
                     Log.d("PermissionActivity", "Notification permission change detected!")
+                    permissionChanged = true
+                }
+
+                val cameraStepIndex = findStepIndexByType(PermissionType.CAMERA)
+                if (cameraStepIndex >= 0 && cameraGranted && !permissionSteps[cameraStepIndex].isGranted) {
+                    Log.d("PermissionActivity", "Camera permission change detected!")
                     permissionChanged = true
                 }
 
@@ -406,6 +463,7 @@ class PermissionActivity : ComponentActivity() {
     private fun stopAllMonitoring() {
         isWaitingForLocationSettings = false
         isWaitingForNotificationSettings = false
+        isWaitingForCameraSettings = false
         isWaitingForBatterySettings = false
         isWaitingForBackgroundLocationSettings = false
         permissionMonitoringJob?.cancel()
@@ -421,6 +479,7 @@ class PermissionActivity : ComponentActivity() {
             PermissionType.BACKGROUND_LOCATION -> Manifest.permission.ACCESS_BACKGROUND_LOCATION
             PermissionType.NOTIFICATION -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 Manifest.permission.POST_NOTIFICATIONS else ""
+            PermissionType.CAMERA -> Manifest.permission.CAMERA
             PermissionType.BATTERY_OPTIMIZATION -> "battery_optimization"
         }
 
@@ -433,7 +492,8 @@ class PermissionActivity : ComponentActivity() {
 
         // Check if we're monitoring any specific permission
         if (isWaitingForLocationSettings || isWaitingForNotificationSettings ||
-            isWaitingForBatterySettings || isWaitingForBackgroundLocationSettings) {
+            isWaitingForCameraSettings || isWaitingForBatterySettings ||
+            isWaitingForBackgroundLocationSettings) {
 
             // Check the specific permission we're waiting for
             when {
@@ -463,6 +523,15 @@ class PermissionActivity : ComponentActivity() {
                         return
                     }
                 }
+                isWaitingForCameraSettings -> {
+                    if (checkCameraPermission()) {
+                        Log.d("PermissionActivity", "Camera permission granted on resume!")
+                        stopAllMonitoring()
+                        val stepIndex = findStepIndexByType(PermissionType.CAMERA)
+                        handlePermissionResult(stepIndex, true)
+                        return
+                    }
+                }
                 isWaitingForBatterySettings -> {
                     if (checkBatteryOptimization()) {
                         Log.d("PermissionActivity", "Battery optimization disabled on resume!")
@@ -477,8 +546,8 @@ class PermissionActivity : ComponentActivity() {
 
         // Only recheck all permissions if we're not currently processing one and not monitoring
         if (!isProcessingPermission && !isWaitingForLocationSettings &&
-            !isWaitingForNotificationSettings && !isWaitingForBatterySettings &&
-            !isWaitingForBackgroundLocationSettings) {
+            !isWaitingForNotificationSettings && !isWaitingForCameraSettings &&
+            !isWaitingForBatterySettings && !isWaitingForBackgroundLocationSettings) {
             checkAllPermissions()
         }
     }
@@ -529,7 +598,15 @@ class PermissionActivity : ComponentActivity() {
                 ))
             }
 
-            // Step 4: Battery Optimization (Android 6+) - MANDATORY
+            // Step 4: Camera Permission - MANDATORY
+            add(PermissionStep(
+                title = "Camera Access",
+                description = "Required for delivery photos",
+                detailedDescription = "Camera permission is MANDATORY to capture delivery photos and proof of delivery. Images are uploaded directly without saving to your device.",
+                icon = Icons.Default.CameraAlt
+            ))
+
+            // Step 5: Battery Optimization (Android 6+) - MANDATORY
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 add(PermissionStep(
                     title = "Battery Optimization",
@@ -553,6 +630,7 @@ class PermissionActivity : ComponentActivity() {
                 PermissionType.LOCATION -> checkLocationPermission()
                 PermissionType.BACKGROUND_LOCATION -> checkBackgroundLocationPermission()
                 PermissionType.NOTIFICATION -> checkNotificationPermission()
+                PermissionType.CAMERA -> checkCameraPermission()
                 PermissionType.BATTERY_OPTIMIZATION -> checkBatteryOptimization()
             }
             Log.d("PermissionActivity", "MANDATORY Permission ${step.title}: $isGranted")
@@ -620,17 +698,28 @@ class PermissionActivity : ComponentActivity() {
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     PermissionType.NOTIFICATION
                 } else {
-                    PermissionType.BATTERY_OPTIMIZATION
+                    PermissionType.CAMERA
                 }
             }
             2 -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     PermissionType.NOTIFICATION
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    PermissionType.CAMERA
                 } else {
                     PermissionType.BATTERY_OPTIMIZATION
                 }
             }
-            3 -> PermissionType.BATTERY_OPTIMIZATION
+            3 -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    PermissionType.CAMERA
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    PermissionType.BATTERY_OPTIMIZATION
+                } else {
+                    PermissionType.BATTERY_OPTIMIZATION
+                }
+            }
+            4 -> PermissionType.BATTERY_OPTIMIZATION
             else -> PermissionType.LOCATION
         }
     }
@@ -641,6 +730,7 @@ class PermissionActivity : ComponentActivity() {
                 PermissionType.LOCATION -> step.title == "Location Access"
                 PermissionType.BACKGROUND_LOCATION -> step.title == "Background Location"
                 PermissionType.NOTIFICATION -> step.title == "Notifications"
+                PermissionType.CAMERA -> step.title == "Camera Access"
                 PermissionType.BATTERY_OPTIMIZATION -> step.title == "Battery Optimization"
             }
         }
@@ -681,6 +771,7 @@ class PermissionActivity : ComponentActivity() {
             PermissionType.LOCATION -> requestLocationPermissions()
             PermissionType.BACKGROUND_LOCATION -> requestBackgroundLocationPermission()
             PermissionType.NOTIFICATION -> requestNotificationPermission()
+            PermissionType.CAMERA -> requestCameraPermission()
             PermissionType.BATTERY_OPTIMIZATION -> requestBatteryOptimizationDisable()
         }
 
@@ -726,6 +817,12 @@ class PermissionActivity : ComponentActivity() {
                 this, Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
         } else true
+    }
+
+    private fun checkCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun checkBatteryOptimization(): Boolean {
@@ -791,6 +888,18 @@ class PermissionActivity : ComponentActivity() {
         } else {
             Log.d("PermissionActivity", "Notification permission not needed for this Android version")
             isProcessingPermission = false
+        }
+    }
+
+    private fun requestCameraPermission() {
+        Log.d("PermissionActivity", "Requesting MANDATORY camera permission (attempt ${(permissionRequestCount[Manifest.permission.CAMERA] ?: 0) + 1})")
+
+        try {
+            requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        } catch (e: Exception) {
+            Log.e("PermissionActivity", "Failed to launch camera permission request", e)
+            // If the launcher fails, start monitoring anyway
+            startCameraPermissionMonitoring()
         }
     }
 
@@ -1159,6 +1268,7 @@ fun BeautifulPermissionScreen(
     permissionAttempts: Int,
     isWaitingForLocationSettings: Boolean = false,
     isWaitingForNotificationSettings: Boolean = false,
+    isWaitingForCameraSettings: Boolean = false,
     isWaitingForBatterySettings: Boolean = false,
     isWaitingForBackgroundLocationSettings: Boolean = false
 ) {
@@ -1290,6 +1400,7 @@ fun BeautifulPermissionScreen(
                                 permissionAttempts = permissionAttempts,
                                 isWaitingForLocationSettings = isWaitingForLocationSettings,
                                 isWaitingForNotificationSettings = isWaitingForNotificationSettings,
+                                isWaitingForCameraSettings = isWaitingForCameraSettings,
                                 isWaitingForBatterySettings = isWaitingForBatterySettings,
                                 isWaitingForBackgroundLocationSettings = isWaitingForBackgroundLocationSettings
                             )
@@ -1346,6 +1457,7 @@ fun BeautifulPermissionScreen(
                             permissionAttempts = permissionAttempts,
                             isWaitingForLocationSettings = isWaitingForLocationSettings,
                             isWaitingForNotificationSettings = isWaitingForNotificationSettings,
+                            isWaitingForCameraSettings = isWaitingForCameraSettings,
                             isWaitingForBatterySettings = isWaitingForBatterySettings,
                             isWaitingForBackgroundLocationSettings = isWaitingForBackgroundLocationSettings
                         )
@@ -1377,6 +1489,7 @@ fun CurrentPermissionCard(
     permissionAttempts: Int,
     isWaitingForLocationSettings: Boolean = false,
     isWaitingForNotificationSettings: Boolean = false,
+    isWaitingForCameraSettings: Boolean = false,
     isWaitingForBatterySettings: Boolean = false,
     isWaitingForBackgroundLocationSettings: Boolean = false
 ) {
@@ -1397,6 +1510,7 @@ fun CurrentPermissionCard(
         "Location Access" -> isWaitingForLocationSettings
         "Background Location" -> isWaitingForBackgroundLocationSettings
         "Notifications" -> isWaitingForNotificationSettings
+        "Camera Access" -> isWaitingForCameraSettings
         "Battery Optimization" -> isWaitingForBatterySettings
         else -> false
     }
@@ -1502,6 +1616,7 @@ fun CurrentPermissionCard(
                             Text(
                                 text = when (step.title) {
                                     "Battery Optimization" -> "Disable battery optimization. The app will detect changes automatically."
+                                    "Camera Access" -> "Grant camera permission in settings. The app will detect changes automatically."
                                     else -> "Grant permission in settings. The app will detect changes automatically."
                                 },
                                 fontSize = getResponsiveTextSize(10).sp,

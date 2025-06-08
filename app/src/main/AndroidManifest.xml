@@ -2,6 +2,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Your existing permissions -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
@@ -10,6 +14,9 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- NEW: Camera permission for capturing delivery photos -->
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- Add these new permissions for background service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
