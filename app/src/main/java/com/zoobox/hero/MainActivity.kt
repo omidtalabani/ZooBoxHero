@@ -41,20 +41,30 @@ import androidx.activity.compose.BackHandler
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Scaffold
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SignalWifiOff
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -63,6 +73,7 @@ import com.zoobox.hero.ui.theme.ZooBoxHeroTheme
 class MainActivity : ComponentActivity(), LocationListener {
     private lateinit var locationManager: LocationManager
     private lateinit var connectivityManager: ConnectivityManager
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private var webViewId = 100001 // Custom ID for finding WebView
     private var gpsDialogShowing = false
@@ -70,6 +81,11 @@ class MainActivity : ComponentActivity(), LocationListener {
     private var gpsDialog: AlertDialog? = null
     private var internetDialog: AlertDialog? = null
     private var appContentSet = false
+
+    // Add state for showing error screen
+    private var showErrorScreen = mutableStateOf(false)
+    private var errorType = mutableStateOf("no_internet")
+    private var errorMessage = mutableStateOf<String?>(null)
 
     // Only keep the WebView reference for background service
     private var webViewReference: WebView? = null
@@ -128,7 +144,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         override fun run() {
             // Check if GPS is enabled
             if (!isGpsEnabled()) {
-                if (!gpsDialogShowing) {
+                if (!gpsDialogShowing && !showErrorScreen.value) {
                     showEnableLocationDialog()
                 }
             } else {
@@ -150,12 +166,13 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
     }
 
-    // Network callback with immediate actions
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+    // Updated network callback with error screen integration
+    private val mainNetworkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             super.onAvailable(network)
-            // Internet is now available, dismiss dialog and continue app flow
+            // Internet is now available, hide error screen and continue app flow
             runOnUiThread {
+                showErrorScreen.value = false
                 dismissInternetDialog()
                 // If GPS is also enabled and we were showing a dialog, proceed
                 if (isGpsEnabled() && (gpsDialogShowing || internetDialogShowing)) {
@@ -166,9 +183,12 @@ class MainActivity : ComponentActivity(), LocationListener {
 
         override fun onLost(network: Network) {
             super.onLost(network)
-            // Internet connection lost
+            // Internet connection lost - show error screen instead of dialog
             runOnUiThread {
-                showInternetRequiredDialog()
+                errorType.value = "no_internet"
+                errorMessage.value = null
+                showErrorScreen.value = true
+                dismissInternetDialog() // Hide any existing dialog
             }
         }
     }
@@ -237,7 +257,8 @@ class MainActivity : ComponentActivity(), LocationListener {
         val networkRequest = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+        networkCallback = mainNetworkCallback
+        connectivityManager.registerNetworkCallback(networkRequest, mainNetworkCallback)
 
         // Start GPS monitoring with faster checks (every second)
         Handler(Looper.getMainLooper()).post(gpsMonitorRunnable)
@@ -249,7 +270,10 @@ class MainActivity : ComponentActivity(), LocationListener {
         if (!isGpsEnabled()) {
             showEnableLocationDialog()
         } else if (!isInternetConnected()) {
-            showInternetRequiredDialog()
+            // Show error screen instead of dialog for internet issues
+            errorType.value = "no_internet"
+            errorMessage.value = null
+            showErrorScreen.value = true
         } else {
             // Both are enabled, continue with normal app flow
             continueAppFlow()
@@ -272,11 +296,13 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
 
         if (isInternetConnected()) {
+            showErrorScreen.value = false
             dismissInternetDialog()
         }
 
         // If both are enabled now, continue
         if (isGpsEnabled() && isInternetConnected()) {
+            showErrorScreen.value = false
             continueAppFlow()
         }
     }
@@ -317,6 +343,27 @@ class MainActivity : ComponentActivity(), LocationListener {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             powerManager.isIgnoringBatteryOptimizations(packageName)
         } else true
+    }
+
+    // Helper method to open connectivity settings (from WebErrorActivity)
+    private fun openConnectivitySettings(context: Context) {
+        try {
+            when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                    val panelIntent = Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
+                    context.startActivity(panelIntent)
+                }
+                else -> {
+                    val intent = Intent(Settings.ACTION_WIRELESS_SETTINGS)
+                    context.startActivity(intent)
+                }
+            }
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_SETTINGS)
+                context.startActivity(intent)
+            } catch (_: Exception) {}
+        }
     }
 
     // Method to start background service
@@ -514,6 +561,7 @@ class MainActivity : ComponentActivity(), LocationListener {
 
             // If internet is also connected, continue the app flow
             if (isInternetConnected()) {
+                showErrorScreen.value = false
                 continueAppFlow()
             }
         }
@@ -583,7 +631,23 @@ class MainActivity : ComponentActivity(), LocationListener {
                 ZooBoxHeroTheme {
                     val showSplash = remember { mutableStateOf(!skipSplash) }
 
-                    if (showSplash.value) {
+                    // Check if we should show error screen
+                    if (showErrorScreen.value) {
+                        MaterialTheme {
+                            ErrorScreen(
+                                errorType = errorType.value,
+                                errorMessage = errorMessage.value,
+                                onSettingsClick = { openConnectivitySettings(this@MainActivity) },
+                                onRetry = {
+                                    // Manual retry - check connection again
+                                    if (isInternetConnected()) {
+                                        showErrorScreen.value = false
+                                    }
+                                    performHapticFeedback(this@MainActivity)
+                                }
+                            )
+                        }
+                    } else if (showSplash.value) {
                         SplashScreen {
                             // When splash screen completes, just show main content
                             // (permissions already checked in onCreate)
@@ -761,7 +825,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
         if (this::connectivityManager.isInitialized) {
             try {
-                connectivityManager.unregisterNetworkCallback(networkCallback)
+                networkCallback?.let { connectivityManager.unregisterNetworkCallback(it) }
             } catch (e: Exception) {
                 // Ignore if callback wasn't registered
             }
@@ -1300,6 +1364,18 @@ class MainActivity : ComponentActivity(), LocationListener {
 
                                     return super.shouldOverrideUrlLoading(view, request)
                                 }
+
+                                // Add error handling for web page errors
+                                override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+                                    super.onReceivedError(view, errorCode, description, failingUrl)
+
+                                    // Show error screen for web page errors
+                                    runOnUiThread {
+                                        errorType.value = "web_error"
+                                        errorMessage.value = "Error loading page: $description"
+                                        showErrorScreen.value = true
+                                    }
+                                }
                             }
 
                             // Save reference to WebView
@@ -1315,7 +1391,7 @@ class MainActivity : ComponentActivity(), LocationListener {
             )
 
             // Show loading indicator when loading but SwipeRefresh isn't showing
-            if (isLoading) {
+            if (isLoading && !showErrorScreen.value) {
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center)
                 )
@@ -1324,6 +1400,11 @@ class MainActivity : ComponentActivity(), LocationListener {
 
         // Handle back button press with haptic feedback
         BackHandler {
+            if (showErrorScreen.value) {
+                // If error screen is showing, allow normal back button behavior
+                return@BackHandler
+            }
+
             performHapticFeedback(context) // Haptic feedback for back button
             webViewRef.value?.let { webView ->
                 if (webView.canGoBack()) {
@@ -1336,6 +1417,171 @@ class MainActivity : ComponentActivity(), LocationListener {
                     android.os.Process.killProcess(android.os.Process.myPid())
                 }
             }
+        }
+    }
+
+    @Composable
+    fun ErrorScreen(
+        errorType: String = "no_internet",
+        errorMessage: String? = null,
+        onSettingsClick: () -> Unit = {},
+        onRetry: () -> Unit = {}
+    ) {
+        val icon = when (errorType) {
+            "no_internet" -> Icons.Default.SignalWifiOff
+            "web_error" -> Icons.Default.ErrorOutline
+            else -> Icons.Default.ErrorOutline
+        }
+        val mainMessage = when (errorType) {
+            "no_internet" -> "No Internet Connection"
+            "web_error" -> "Web Page Error"
+            else -> "Network Error"
+        }
+        val details = when {
+            errorMessage != null -> errorMessage
+            errorType == "no_internet" -> "Please check your internet connection.\nLet's get you back online quickly."
+            errorType == "web_error" -> "An error occurred while loading the page. Please check your connection or try again."
+            else -> "A network problem occurred."
+        }
+
+        val infiniteTransition = rememberInfiniteTransition(label = "infinite")
+        val pulseScale by infiniteTransition.animateFloat(
+            initialValue = 0.8f, targetValue = 1.2f,
+            animationSpec = infiniteRepeatable(tween(1500, easing = EaseInOutSine), RepeatMode.Reverse),
+            label = "pulse"
+        )
+        val wifiPulse by infiniteTransition.animateFloat(
+            initialValue = 0.6f, targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(tween(2000, easing = EaseInOutSine), RepeatMode.Reverse),
+            label = "wifi_pulse"
+        )
+        val dotsAnimation by infiniteTransition.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1500, easing = LinearEasing), RepeatMode.Restart),
+            label = "dots"
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color(0xFF1565C0), Color(0xFF1976D2), Color(0xFF1E88E5))
+                    )
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(120.dp)
+                        .scale(wifiPulse),
+                    tint = Color.White.copy(alpha = 0.9f)
+                )
+                Spacer(modifier = Modifier.height(32.dp))
+                Text(
+                    text = mainMessage,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = details,
+                    fontSize = 16.sp,
+                    color = Color.White.copy(alpha = 0.85f),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 22.sp
+                )
+                Spacer(modifier = Modifier.height(48.dp))
+                Button(
+                    onClick = onSettingsClick,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = Color(0xFF1976D2)
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = 8.dp,
+                        pressedElevation = 12.dp
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Settings",
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Open Connection Settings",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = onRetry,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    border = BorderStroke(2.dp, Color.White),
+                    shape = RoundedCornerShape(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Retry",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Try Again",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 48.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(Color(0xFFFF9800), CircleShape)
+                        .scale(pulseScale)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Searching for connection${getAnimatedDots(dotsAnimation)}",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+
+    private fun getAnimatedDots(progress: Float): String {
+        return when ((progress * 4).toInt() % 4) {
+            0 -> ""
+            1 -> "."
+            2 -> ".."
+            else -> "..."
         }
     }
 }
