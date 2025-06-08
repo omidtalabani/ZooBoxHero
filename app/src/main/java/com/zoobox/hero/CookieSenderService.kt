@@ -333,6 +333,7 @@ class CookieSenderService : Service() {
                         val json = JSONObject(responseBody)
                         val success = json.optBoolean("success", false)
                         val message = json.optString("message", "Operation completed")
+                        val tab = json.optString("tab", "food") // Default to food if no tab specified
 
                         if (success) {
                             // Show notification, but only if we haven't shown one recently
@@ -343,11 +344,11 @@ class CookieSenderService : Service() {
                                     // Show toast
                                     Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
 
-                                    // Show notification (which will play custom sound and handle vibration)
-                                    showOrderNotification(message)
+                                    // Show notification with tab parameter
+                                    showOrderNotification(message, tab)
 
                                     // Log successful notification request
-                                    Log.d("CookieSenderService", "Notification triggered for message: $message")
+                                    Log.d("CookieSenderService", "Notification triggered for message: $message, tab: $tab")
                                 }
                             }
                         }
@@ -360,13 +361,15 @@ class CookieSenderService : Service() {
         })
     }
 
-    private fun showOrderNotification(message: String) {
+    private fun showOrderNotification(message: String, tab: String = "food") {
         try {
-            // Create intent with specific target URL
+            // Create intent with specific target URL based on tab
+            val targetUrl = "https://mikmik.site/heroes/pending_orders.php?tab=$tab"
+
             val notificationIntent = Intent(this, MainActivity::class.java).apply {
                 putExtra("ORDER_NOTIFICATION", true)
-                // Add the specific URL to open when notification is clicked
-                putExtra("TARGET_URL", "https://mikmik.site/heroes/pending_orders.php")
+                // Add the specific URL to open when notification is clicked with tab parameter
+                putExtra("TARGET_URL", targetUrl)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
 
@@ -525,7 +528,7 @@ class CookieSenderService : Service() {
                 Log.d("CookieSenderService", "Vibration stopped after 30 seconds")
             }, 30000)
 
-            Log.d("CookieSenderService", "Notification with ID: $notificationId sent with sound: $soundUri")
+            Log.d("CookieSenderService", "Notification with ID: $notificationId sent with sound: $soundUri, URL: $targetUrl")
         } catch (e: Exception) {
             Log.e("CookieSenderService", "Error showing notification", e)
         }
