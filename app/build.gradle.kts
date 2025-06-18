@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId = "com.zoobox.hero"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 34 // Use 34 for Play Store publishing. Use 35 ONLY if Android 15 is stable and Play Store allows it.
         versionCode = 1
         versionName = "1.0"
 
