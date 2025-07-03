@@ -1586,7 +1586,7 @@ class MainActivity : ComponentActivity(), LocationListener {
     }
 }
 
-// Helper function for haptic feedback
+// Helper function for haptic feedback t
 private fun performHapticFeedback(context: Context) {
     val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
 
